@@ -1,5 +1,4 @@
 from firebase_admin import auth
-
 def getUserId(unique, name, db):
     result = db.users.find_one({"unique": unique})
     if result:
@@ -24,7 +23,14 @@ def getEncodingByIden(unique, db):
 
 
 def initializeUser(args, db):
-    decoded_token = auth.verify_id_token(args['token'])
-    uid = decoded_token['uid']
+    try:
+        if args['Authorization'].startswith('Bearer '):
+            tokenStr = args['Authorization'].split(" ")[1]
+            decoded_token = auth.verify_id_token(tokenStr)
+            uid = decoded_token['uid']
+        else:
+            return "unauthorized"
+    except auth.InvalidIdTokenError:
+        return "expired/invalid"
     result = db.userdata.update_one({'firebaseID': uid}, {'$set': {"priv": args['priv']}}, upsert=True)
-    return result
+    return "true" if (result.matched_count == 1 or result.upserted_id) else "false"

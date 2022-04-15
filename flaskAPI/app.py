@@ -38,8 +38,8 @@ saveparser.add_argument('name', required=True)
 saveparser.add_argument('uniqueId', required=True)
 
 initparser = reqparse.RequestParser()
-initparser.add_argument('token', required=True)
-initparser.add_argument('priv', required=True)
+initparser.add_argument('Authorization', location='headers', required=True)
+initparser.add_argument('priv',type=int , location='json', required=True)
 
 @api.route('/hello')
 # @api.doc(params={'id': 'An ID'})
@@ -80,13 +80,13 @@ class FaceSaver(Resource):
 
 
 @api.route('/inituser')
-@api.doc(params={'priv': 'employee if 0, manager if 1',
-                 'token': 'firebase token'})
+@api.doc(params={'payload': 'employee if 0, manager if 1',
+                 'Authorization': 'firebase token'})
 class CustomerInit(Resource):
     @api.expect(initparser)
     def post(self):
         args = initparser.parse_args()
-        if args['priv'] == "0" or args['priv'] == "1":
+        if args['priv'] == 0 or args['priv'] == 1:
             return {'result': initializeUser(args, db)}
         else:
             return{'result': 'false'}
