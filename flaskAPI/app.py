@@ -18,9 +18,6 @@ except KeyError:
     print("Environment vairable not set")
 
 
-sec = os.environ['GOOGLE_CRED']
-with open('json_cred.json', 'w') as outfile:
-    outfile.write(sec)
 default_app = firebase_admin.initialize_app()
 
 try:
