@@ -7,8 +7,8 @@ import numpy as np
 import os
 from pymongo.mongo_client import MongoClient
 from pymongo.server_api import ServerApi
-from dbops import getUserId, insertEncoding, getEncodingByIden
-
+from dbops import getUserId, insertEncoding, getEncodingByIden, initializeUser
+import firebase_admin
 app = Flask(__name__)
 api = Api(app)
 portNo = int(os.environ.get("PORT", 5000))
@@ -16,6 +16,12 @@ try:
     dbCred = os.environ["DBCRED"]
 except KeyError:
     print("Environment vairable not set")
+
+
+sec = os.environ['GOOGLE_CRED']
+with open('json_cred.json', 'w') as outfile:
+    outfile.write(sec)
+default_app = firebase_admin.initialize_app()
 
 try:
     client = MongoClient("mongodb+srv://appAdmin:"+dbCred+"@cluster0.g49of.mongodb.net/myFirstDatabase?retryWrites=true&w=majority", server_api=ServerApi('1'))
@@ -30,6 +36,10 @@ saveparser.add_argument('picture',
                         location='files')
 saveparser.add_argument('name', required=True)
 saveparser.add_argument('uniqueId', required=True)
+
+initparser = reqparse.RequestParser()
+initparser.add_argument('token', required=True)
+initparser.add_argument('priv', required=True)
 
 @api.route('/hello')
 # @api.doc(params={'id': 'An ID'})
@@ -69,6 +79,19 @@ class FaceSaver(Resource):
         return {'success': True if inserted_id else False}
 
 
+@api.route('/inituser')
+@api.doc(params={'priv': 'employee if 0, manager if 1',
+                 'token': 'firebase token'})
+class CustomerInit(Resource):
+    @api.expect(initparser)
+    def post(self):
+        args = initparser.parse_args()
+        if args['priv'] == "0" or args['priv'] == "1":
+            return {'result': initializeUser(args, db)}
+        else:
+            return{'result': 'false'}
+
+            
 if __name__ == '__main__':
     if "IS_DEV" in os.environ:
         app.run(port=portNo, debug=False)

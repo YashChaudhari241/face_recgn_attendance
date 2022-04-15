@@ -6,13 +6,13 @@ from face_align import FaceAlign
 # import sys
 
 pose_predictor = dlib.shape_predictor(
-    'shape_predictor_68_face_landmarks_GTX.dat')
+    'models/shape_predictor_68_face_landmarks_GTX.dat')
 fa = FaceAlign(pose_predictor)
 face_encoder = dlib.face_recognition_model_v1(
-    'dlib_face_recognition_resnet_model_v1.dat')
+    'models/dlib_face_recognition_resnet_model_v1.dat')
 # detector = dlib.get_frontal_face_detector()
-modelFile = 'opencv_face_detector_uint8.pb'
-configFile = 'opencv_face_detector.pbtxt'
+modelFile = 'models/opencv_face_detector_uint8.pb'
+configFile = 'models/opencv_face_detector.pbtxt'
 net = cv2.dnn.readNetFromTensorflow(modelFile, configFile)
 
 
