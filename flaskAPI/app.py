@@ -20,6 +20,12 @@ except KeyError:
 
 default_app = firebase_admin.initialize_app()
 
+
+sec = os.environ['GOOGLE_CRED']
+with open(os.environ['GOOGLE_APPLICATION_CREDENTIALS'], 'w') as outfile:
+    outfile.write(sec)
+    outfile.close()
+
 try:
     client = MongoClient("mongodb+srv://appAdmin:"+dbCred+"@cluster0.g49of.mongodb.net/myFirstDatabase?retryWrites=true&w=majority", server_api=ServerApi('1'))
     db = client.facerec
