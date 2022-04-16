@@ -22,6 +22,19 @@ def getEncodingByIden(unique, db):
         return None
 
 
+def getUserIdFromToken(token):
+    try:
+        if token.startswith('Bearer '):
+            tokenStr = token.split(" ")[1]
+            decoded_token = auth.verify_id_token(tokenStr)
+            uid = decoded_token['uid']
+            return (True, uid)
+        else:
+            return (False, "unauthorized")
+    except auth.InvalidIdTokenError:
+        return (False, "expired/invalid")
+
+
 def initializeUser(args, db):
     try:
         if args['Authorization'].startswith('Bearer '):
