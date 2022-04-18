@@ -9,8 +9,9 @@ import os
 # import sys
 from pymongo.mongo_client import MongoClient
 from pymongo.server_api import ServerApi
-from dbops import getUserId, insertEncoding, getEncodingByIden, initializeUser, getUserIdFromToken
+from dbops import DbHelper
 import firebase_admin
+from firebase_admin import auth
 import random
 import string
 app = Flask(__name__)
@@ -57,6 +58,10 @@ orgInitParser.add_argument('joinPass', location='json')
 orgInitParser.add_argument('locations', location='json',action='split')
 orgInitParser.add_argument('locationsRadius', location='json', action='split')
 
+passParser = reqparse.RequestParser()
+passParser.add_argument('p', location='values')
+passParser2 = passParser.copy()
+passParser2.add_argument('Authorization', location='headers', required=True)
 
 @api.route('/hello')
 # @api.doc(params={'id': 'An ID'})
@@ -75,7 +80,7 @@ class FaceEncoder(Resource):
         img = args['picture']
         unique = args['uniqueId']
         # storedEnc = np.load(args['name']+'.npy', allow_pickle=True)
-        storedEnc = np.array(getEncodingByIden(unique, db))
+        storedEnc = np.array(DbHelper.getEncodingByIden(unique, db))
         encodings = np.array(getEncodings({img}))
         return {'match': np.linalg.norm(storedEnc - encodings)}
 
@@ -91,8 +96,8 @@ class FaceSaver(Resource):
         unique = args['uniqueId']
         encodings = np.array(getEncodings({img}))
         # np.save(args['name']+'.npy', encodings)
-        user_id = getUserId(unique, name, db)
-        inserted_id = insertEncoding(encodings, user_id, db)
+        user_id = DbHelper.getUserId(unique, name, db)
+        inserted_id = DbHelper.insertEncoding(encodings, user_id, db)
         return {'success': True if inserted_id else False}
 
 
@@ -104,7 +109,7 @@ class CustomerInit(Resource):
     def post(self):
         args = userInitParser.parse_args()
         if args['priv'] == 0 or args['priv'] == 1:
-            return {'result': initializeUser(args, db)}
+            return {'result': DbHelper.initializeUser(args, db)}
         else:
             return{'result': 'false'}
 
@@ -116,7 +121,7 @@ class OrgInit(Resource):
     @api.expect(orgInitParser)
     def post(self):
         args = orgInitParser.parse_args()
-        res, uid = getUserIdFromToken(args['Authorization'])
+        res, uid = DbHelper.getUserIdFromToken(args['Authorization'])
         if res:
             orgToAdd = {
                 'orgName': args['orgName'],
@@ -159,6 +164,55 @@ class OrgInit(Resource):
         else:
             return {'result': 'Unauthorized'}
 
+
+@api.route('/join/<string:org_str>')
+class JoinOrg(Resource):
+    @api.expect(passParser)
+    def get(self, org_str):
+        args = passParser.parse_args()
+        org = DbHelper.getOrgByStr(org_str, db)
+        if org:
+            if ('joinPass' in org and 'p'in args and args['p'] == org['joinPass']) or ('joinPass' not in org):
+                result = { 'orgName': org['orgName']}
+                owner = auth.get_user(org.pop('owner'))
+                result['ownerName'] = owner.display_name
+                result['ownerPhoto'] = owner.photo_url
+                if org['markLoc']:
+                    numLoc = len(org['locationData'])
+                    org.pop('locationData')
+                    result['numLoc'] = numLoc
+                result['verified'] = True
+                return result
+            else:
+                return {
+                    'orgName': org['orgName'],
+                    'verified': False
+                }
+        else:
+            return {
+                'result': False
+            }
+
+
+    @api.expect(passParser2)
+    def post(self,org_str):
+        args = passParser2.parse_args()
+        res,uid = DbHelper.getUserIdFromToken(args['Authorization'])
+        if res:
+            org = DbHelper.getOrgByStr(org_str, db)
+            if org:
+                if ('joinPass' in org and 'p'in args and args['p'] == org['joinPass']) or ('joinPass' not in org):
+                    #db.userdata.update_one({'firebaseID':uid}, {'$push': {'joinedOrgs': org['_id']}})
+                    db.userdata.update_one({'firebaseID':uid},{'$set':{'joinedOrgs': org['_id']}})
+                    return{ 'result':True}
+                else:
+                    return{ 'result': 'Incorrect password'}
+            else:
+                return{ 'result': 'Org not found'}
+        else:
+            return{
+                'result':uid
+            }
 
 if __name__ == '__main__':
     if "IS_DEV" in os.environ:
