@@ -6,7 +6,6 @@ from flask_restx import inputs
 from werkzeug.datastructures import FileStorage
 import numpy as np
 import os
-# import sys
 from pymongo.mongo_client import MongoClient
 from pymongo.server_api import ServerApi
 from dbops import DbHelper
@@ -62,6 +61,20 @@ passParser = reqparse.RequestParser()
 passParser.add_argument('p', location='values')
 passParser2 = passParser.copy()
 passParser2.add_argument('Authorization', location='headers', required=True)
+
+userDetailsParser = reqparse.RequestParser()
+userDetailsParser.add_argument('Authorization', location='headers', required=True)
+
+calibrationParser = userDetailsParser.copy()
+calibrationParser.add_argument('pic1',
+                        type=FileStorage,
+                        location='files')
+calibrationParser.add_argument('pic2',
+                        type=FileStorage,
+                        location='files')
+calibrationParser.add_argument('pic3',
+                        type=FileStorage,
+                        location='files')
 
 @api.route('/hello')
 # @api.doc(params={'id': 'An ID'})
@@ -213,6 +226,66 @@ class JoinOrg(Resource):
             return{
                 'result':uid
             }
+
+@api.route('/userdetails')
+class UserDetails(Resource):
+    @api.expect(userDetailsParser)
+    def post(self):
+        args = userDetailsParser.parse_args()
+        res,uid = DbHelper.getUserIdFromToken(args['Authorization'])
+        if res:
+            pipeline = [{
+                "$match": {
+                    "firebaseID": uid
+                }
+            },
+            {
+                "$lookup": {
+                        "from": "orgs",
+                        "localField": "joinedOrgs",
+                        "foreignField": "_id",
+                        "as": "orgDetails"}
+                }
+            ]
+            dbres = list(db.userdata.aggregate(pipeline))[0]
+            orgDetails=list(dbres['orgDetails'])[0]
+            orgDetails.pop('_id')
+            owner = auth.get_user(orgDetails.pop('owner'))
+            orgDetails['ownerName'] = owner.display_name
+            orgDetails['ownerPic'] = owner.photo_url
+            result = {
+                'priv': dbres['priv'],
+                'orgDetails': orgDetails
+            }
+            return result
+        else:
+            return{
+                'result': uid
+            }
+
+
+@api.route('/calibrate')
+class CalibrateFace(Resource):
+    @api.expect(calibrationParser)
+    def post(self):
+        args = userDetailsParser.parse_args()
+        res,uid = DbHelper.getUserIdFromToken(args['Authorization'])
+        if res:
+            args.pop('Authorization')
+            enc = []
+            for x in args:
+                enc.append(getEncodings({x}))
+            if len(enc) > 0:
+                db.userdata.update_one({'firebaseID': uid}, {"$set": {"faceEncodings": enc}})
+            else:
+                return {
+                    'result': 'no faces found'
+                }
+        else:
+            return{
+                'result': uid
+            }
+
 
 if __name__ == '__main__':
     if "IS_DEV" in os.environ:
