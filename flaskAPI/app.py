@@ -13,6 +13,9 @@ import firebase_admin
 from firebase_admin import auth
 import random
 import string
+import geopy.distance
+import datetime
+import math
 app = Flask(__name__)
 api = Api(app)
 portNo = int(os.environ.get("PORT", 5000))
@@ -31,7 +34,7 @@ with open(os.environ['GOOGLE_APPLICATION_CREDENTIALS'], 'w') as outfile:
     outfile.close()
 
 try:
-    client = MongoClient("mongodb+srv://appAdmin:"+dbCred+"@cluster0.g49of.mongodb.net/myFirstDatabase?retryWrites=true&w=majority", server_api=ServerApi('1'))
+    client = MongoClient(dbCred, server_api=ServerApi('1'))
     db = client.facerec
 except KeyError:
     print("Unable to connect to database")
@@ -46,16 +49,21 @@ saveParser.add_argument('uniqueId', required=True)
 
 userInitParser = reqparse.RequestParser()
 userInitParser.add_argument('Authorization', location='headers', required=True)
-userInitParser.add_argument('priv', type=int, location='json', required=True)
+userInitParser.add_argument('priv', type=int, location='form', required=True)
 
 orgInitParser = reqparse.RequestParser()
 orgInitParser.add_argument('Authorization', location='headers', required=True)
-orgInitParser.add_argument('orgName', location='json', required=True)
-orgInitParser.add_argument('locEnabled', type=inputs.boolean, location='json', required=True)
-orgInitParser.add_argument('markExit', type=inputs.boolean, location='json', required=True)
-orgInitParser.add_argument('joinPass', location='json')
-orgInitParser.add_argument('locations', location='json',action='split')
-orgInitParser.add_argument('locationsRadius', location='json', action='split')
+orgInitParser.add_argument('orgName', location='form', required=True)
+orgInitParser.add_argument('locEnabled', type=inputs.boolean, location='form', required=True)
+orgInitParser.add_argument('markExit', type=inputs.boolean, location='form', required=True)
+orgInitParser.add_argument('allowMissedExit', type=inputs.boolean, location='form', required=True)
+orgInitParser.add_argument('defMissedInterval',type=int, location='form')
+orgInitParser.add_argument('joinPass', location='form')
+orgInitParser.add_argument('locations', location='form',action='split')
+orgInitParser.add_argument('locationsRadius', location='form', action='split')
+orgInitParser.add_argument('defStart', location='form', required=True)
+orgInitParser.add_argument('defEnd', location='form', required=True)
+
 
 passParser = reqparse.RequestParser()
 passParser.add_argument('p', location='values')
@@ -68,14 +76,40 @@ userDetailsParser.add_argument('Authorization', location='headers', required=Tru
 calibrationParser = userDetailsParser.copy()
 calibrationParser.add_argument('pic1',
                         type=FileStorage,
-                        location='files')
+                        location='files',
+                        required=True)
 calibrationParser.add_argument('pic2',
+                        required=True,
                         type=FileStorage,
                         location='files')
 calibrationParser.add_argument('pic3',
                         type=FileStorage,
-                        location='files')
+                        location='files',
+                        required=True)
 
+attendanceParser = reqparse.RequestParser()
+attendanceParser.add_argument('Authorization', location='headers', required=True)
+attendanceParser.add_argument('pic',
+                        type=FileStorage,
+                        location='files',
+                        required=True)
+attendanceParser.add_argument('locx',location='form')
+attendanceParser.add_argument('locy',location='form')
+attendanceParser.add_argument('entryExit', location='form', type=inputs.boolean, required=True)
+cache={}
+orgPipeline = [{
+                "$match": {
+                    "firebaseID": 0
+                }
+            },
+            {
+                "$lookup": {
+                        "from": "orgs",
+                        "localField": "joinedOrgs",
+                        "foreignField": "_id",
+                        "as": "orgDetails"}
+                }
+            ]
 @api.route('/hello')
 # @api.doc(params={'id': 'An ID'})
 @api.doc()
@@ -84,6 +118,7 @@ class HelloWorld(Resource):
         return {'hello': 'world'}
 
 
+@api.deprecated
 @api.route('/checkface')
 @api.doc(params={'picture': 'An Image'})
 class FaceEncoder(Resource):
@@ -98,6 +133,7 @@ class FaceEncoder(Resource):
         return {'match': np.linalg.norm(storedEnc - encodings)}
 
 
+@api.deprecated
 @api.route('/saveface')
 @api.doc(params={'picture': 'An Image'})
 class FaceSaver(Resource):
@@ -115,7 +151,7 @@ class FaceSaver(Resource):
 
 
 @api.route('/inituser')
-@api.doc(params={'payload': 'employee if 0, manager if 1',
+@api.doc(params={'priv': 'employee if 0, manager if 1',
                  'Authorization': 'firebase token'})
 class CustomerInit(Resource):
     @api.expect(userInitParser)
@@ -124,11 +160,21 @@ class CustomerInit(Resource):
         if args['priv'] == 0 or args['priv'] == 1:
             return {'result': DbHelper.initializeUser(args, db)}
         else:
-            return{'result': 'false'}
+            return{'result': False,
+                   'error':'Invalid Parameters'}
 
 
 @api.route('/initorg')
-@api.doc(params={'payload': 'company name, locationEnabled? , locations and allowed range if required',
+@api.doc(params={'orgName': 'Name of the org',
+                 'markExit': 'Whether to mark Exit times',
+                 'allowMissedExit': 'Whether to enable automatic exit marking',
+                 'defMissedInterval': 'Time in minutes to refresh location and mark attendance when last spotted in radius ',
+                 'joinPass': 'Password to join org',
+                 'defStart': 'Default Start Time',
+                 'defEnd': 'Default End Time',
+                 'locEnabled': 'Whether to enable geofencing',
+                 'locations': 'latituide longitude seperated by colon',
+                 'locationsRadius': 'radius within which marking attendance is allowed, default is 25',
                  'Authorization': 'firebase token'})
 class OrgInit(Resource):
     @api.expect(orgInitParser)
@@ -141,6 +187,9 @@ class OrgInit(Resource):
                 'markExit': args['markExit'],
                 'owner': uid,
                 'markLoc': args['locEnabled'],
+                'allowMissedExit': args['allowMissedExit'],
+                'defStart': args['defStart'],
+                'defEnd': args['defEnd']
             }
             if args['locEnabled']:
                 if 'locations' in args and args['locations']:
@@ -150,7 +199,8 @@ class OrgInit(Resource):
                         try:
                             x,y=i.split(":")
                         except:
-                            return {"result": "invalid location data"}
+                            return {'result': False,
+                                    'error': "invalid location data"}
                         if "locationsRadius" in args and indx < len(args['locationsRadius']):
                             rad = min(500, max(int(args['locationsRadius'][indx]), 20))
                         else:
@@ -162,20 +212,31 @@ class OrgInit(Resource):
                         })
                         indx = indx + 1
                 else:
-                    return {'result': 'Geofencing Enabled but missing Locations'}
+                    return {'result': False,
+                            'error': 'Geofencing Enabled but missing Locations'}
                 orgToAdd['locationData'] = locationData
             if args['joinPass']:
                 if len(args['joinPass']) < 4:
-                    return {'result': 'Password too short'}
+                    return {'result': False,
+                            'error': 'Password too short'}
                 else:
                     orgToAdd['joinPass'] = args['joinPass']
             uniqueStr = ''.join(random.SystemRandom().choice(string.ascii_uppercase + string.digits) for _ in range(6))
             orgToAdd['uniqueString'] = uniqueStr
+            if args['allowMissedExit'] and args['markExit']:
+                if 'defMissedInterval' in args:
+                    orgToAdd['defMissedInterval'] = max(5,min(60,args['defMissedInterval']))
+                else:
+                    return {
+                        'result': False,
+                        'error': 'required interval if automark exit is enabled'
+                    }
             db.orgs.insert_one(orgToAdd)
             return {'result': True,
                     'uniqueStr': uniqueStr}
         else:
-            return {'result': 'Unauthorized'}
+            return {'result': False,
+                    'error': 'Unauthorized'}
 
 
 @api.route('/join/<string:org_str>')
@@ -190,6 +251,7 @@ class JoinOrg(Resource):
                 owner = auth.get_user(org.pop('owner'))
                 result['ownerName'] = owner.display_name
                 result['ownerPhoto'] = owner.photo_url
+                result['result'] = True
                 if org['markLoc']:
                     numLoc = len(org['locationData'])
                     org.pop('locationData')
@@ -198,12 +260,14 @@ class JoinOrg(Resource):
                 return result
             else:
                 return {
+                    'result': True,
                     'orgName': org['orgName'],
                     'verified': False
                 }
         else:
             return {
-                'result': False
+                'result': False,
+                'error': 'Org Doesnt Exist'
             }
 
 
@@ -219,12 +283,19 @@ class JoinOrg(Resource):
                     db.userdata.update_one({'firebaseID':uid},{'$set':{'joinedOrgs': org['_id']}})
                     return{ 'result':True}
                 else:
-                    return{ 'result': 'Incorrect password'}
+                    return{
+                            'result': False,
+                            'error': 'Incorrect password'
+                          }
             else:
-                return{ 'result': 'Org not found'}
+                return{
+                        'result': False,
+                        'error': 'Org not found'
+                    }
         else:
             return{
-                'result':uid
+                'result': False,
+                'error':uid
             }
 
 @api.route('/userdetails')
@@ -234,33 +305,23 @@ class UserDetails(Resource):
         args = userDetailsParser.parse_args()
         res,uid = DbHelper.getUserIdFromToken(args['Authorization'])
         if res:
-            pipeline = [{
-                "$match": {
-                    "firebaseID": uid
-                }
-            },
-            {
-                "$lookup": {
-                        "from": "orgs",
-                        "localField": "joinedOrgs",
-                        "foreignField": "_id",
-                        "as": "orgDetails"}
-                }
-            ]
-            dbres = list(db.userdata.aggregate(pipeline))[0]
+            orgPipeline[0]["$match"]["firebaseID"] = uid
+            dbres = list(db.userdata.aggregate(orgPipeline))[0]
             orgDetails=list(dbres['orgDetails'])[0]
             orgDetails.pop('_id')
             owner = auth.get_user(orgDetails.pop('owner'))
             orgDetails['ownerName'] = owner.display_name
             orgDetails['ownerPic'] = owner.photo_url
             result = {
+                'result': True,
                 'priv': dbres['priv'],
                 'orgDetails': orgDetails
             }
             return result
         else:
             return{
-                'result': uid
+                'result': False,
+                'error': uid
             }
 
 
@@ -268,24 +329,114 @@ class UserDetails(Resource):
 class CalibrateFace(Resource):
     @api.expect(calibrationParser)
     def post(self):
-        args = userDetailsParser.parse_args()
+        args = calibrationParser.parse_args()
         res,uid = DbHelper.getUserIdFromToken(args['Authorization'])
         if res:
             args.pop('Authorization')
             enc = []
-            for x in args:
-                enc.append(getEncodings({x}))
+            for x in ['pic1','pic2','pic3']:
+                enc.append(np.array(getEncodings({args[x]})).tolist())
+
             if len(enc) > 0:
                 db.userdata.update_one({'firebaseID': uid}, {"$set": {"faceEncodings": enc}})
+                return {
+                    'result': True
+                }
             else:
                 return {
-                    'result': 'no faces found'
+                    'result': False,
+                    'error': 'no faces found'
                 }
         else:
             return{
-                'result': uid
+                'result': False,
+                'error': uid
             }
 
+@api.route('/markattendance')
+@api.doc(params={'pic':'Current Picture of user to check if face matches',
+                  'locx': 'Current Latitude',
+                  'locy': 'Current Longitude',
+                  'entryExit': 'Whether this attendance is entry or exit'})
+class MarkAttendance(Resource):
+    @api.expect(attendanceParser)
+    def post(self):
+        args = attendanceParser.parse_args()
+        res,uid = DbHelper.getUserIdFromToken(args['Authorization'])
+        if res:
+            orgPipeline[0]["$match"]["firebaseID"] = uid
+            dbres = list(db.userdata.aggregate(orgPipeline))[0]
+            if 'orgDetails' not in dbres:
+                return {
+                    'result':False,
+                    'error': 'Join org first'
+                }
+            orgDetails = list(dbres['orgDetails'])[0]
+            if not orgDetails['markExit'] and args['entryExit']:
+                return{
+                    'result':False,
+                    'error': 'Org doesnt allow to mark exit'
+                }
+            if 'attendance' in dbres and dbres['attendance']:
+                lastAttendance = dbres['attendance'][-1]
+                attendanceType = "Entry" if args['entryExit'] else "Exit"
+                if args['entryExit'] == lastAttendance['entryExit'] and datetime.datetime.utcnow().date() == lastAttendance['timeStamp'].date():
+                    return {
+                        'result':False,
+                        'error': attendanceType + 'Already Marked today at '+lastAttendance['timeStamp'].isoformat()
+                    }
+                elif not lastAttendance['entryExit'] and args['entryExit'] and datetime.datetime.utcnow().date() == lastAttendance['timeStamp'].date():
+                    return {
+                        'result':False,
+                        'error': 'Entry after Exit'
+                    }
+                elif not args['entryExit'] and datetime.datetime.utcnow().date() != lastAttendance['timeStamp'].date():
+                    return{
+                        'result':False,
+                        'error': 'Exit before Entry'
+                    }
+            elif not args['entryExit']:
+                return {
+                    'result':False,
+                    'error': 'Cant exit without entry'
+                }
+            if orgDetails['markLoc'] == True and ('locx' not in args or 'locy' not in args):
+                return{
+                    'result':False,
+                    'error': 'location required'
+                }
+            elif orgDetails['markLoc'] == True and 'locx' in args and 'locy' in args:
+                mindist = None
+                minr = None
+                for x in orgDetails['locationData']:
+                    dist = geopy.distance.geodesic((args['locx'],args['locy']), (x['xcord'],x['ycord'])).m
+                    if (not mindist or dist<mindist):
+                        mindist = dist
+                        minr = x['radius']
+                    if dist < x['radius']:
+                        result = DbHelper.markAttend(uid, orgDetails, args, db)
+                        return{
+                                'result': result[1]
+                            }
+                return {
+                    'result':False,
+                    'error': 'Out of range (metres)',
+                    'dist': str(math.ceil(mindist-minr))
+                }
+            elif not orgDetails['markLoc']:
+                result = DbHelper.markAttend(uid, orgDetails, args, db)
+                return {
+                        'result': result
+                    }
+            return {
+                'result': False,
+                'error':'Some Error Occured'
+            }
+        else:
+            return{
+                'result':False,
+                'error': uid
+            }
 
 if __name__ == '__main__':
     if "IS_DEV" in os.environ:
