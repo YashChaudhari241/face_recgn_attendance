@@ -11,11 +11,10 @@ from pymongo.server_api import ServerApi
 from dbops import DbHelper
 import firebase_admin
 from firebase_admin import auth
-import random
-import string
 import geopy.distance
 import datetime
 import math
+from nanoid import generate
 app = Flask(__name__)
 api = Api(app)
 portNo = int(os.environ.get("PORT", 5000))
@@ -96,20 +95,17 @@ attendanceParser.add_argument('pic',
 attendanceParser.add_argument('locx',location='form')
 attendanceParser.add_argument('locy',location='form')
 attendanceParser.add_argument('entryExit', location='form', type=inputs.boolean, required=True)
+
+newLeaveParser = userDetailsParser.copy()
+newLeaveParser.add_argument('startDate', type=inputs.date, location='form',required=True)
+newLeaveParser.add_argument('endDate', type=inputs.date, location='form',required=True)
+newLeaveParser.add_argument('message', location='form',required=True)
+
+approveLeaveParser = userDetailsParser.copy()
+approveLeaveParser.add_argument('pubID', location='form', required=True)
+
 cache={}
-orgPipeline = [{
-                "$match": {
-                    "firebaseID": 0
-                }
-            },
-            {
-                "$lookup": {
-                        "from": "orgs",
-                        "localField": "joinedOrgs",
-                        "foreignField": "_id",
-                        "as": "orgDetails"}
-                }
-            ]
+
 @api.route('/hello')
 # @api.doc(params={'id': 'An ID'})
 @api.doc()
@@ -221,7 +217,7 @@ class OrgInit(Resource):
                             'error': 'Password too short'}
                 else:
                     orgToAdd['joinPass'] = args['joinPass']
-            uniqueStr = ''.join(random.SystemRandom().choice(string.ascii_uppercase + string.digits) for _ in range(6))
+            uniqueStr = generate(size=6)
             orgToAdd['uniqueString'] = uniqueStr
             if args['allowMissedExit'] and args['markExit']:
                 if 'defMissedInterval' in args:
@@ -305,16 +301,16 @@ class UserDetails(Resource):
         args = userDetailsParser.parse_args()
         res,uid = DbHelper.getUserIdFromToken(args['Authorization'])
         if res:
-            orgPipeline[0]["$match"]["firebaseID"] = uid
-            dbres = list(db.userdata.aggregate(orgPipeline))[0]
-            orgDetails=list(dbres['orgDetails'])[0]
-            orgDetails.pop('_id')
-            owner = auth.get_user(orgDetails.pop('owner'))
-            orgDetails['ownerName'] = owner.display_name
-            orgDetails['ownerPic'] = owner.photo_url
+            userres = DbHelper.getUserDetails(uid, db)
+            orgDetails = userres['org']
+            if orgDetails:
+                orgDetails.pop('_id')
+                owner = auth.get_user(orgDetails.pop('owner'))
+                orgDetails['ownerName'] = owner.display_name
+                orgDetails['ownerPic'] = owner.photo_url
             result = {
                 'result': True,
-                'priv': dbres['priv'],
+                'priv': userres['user']['priv'],
                 'orgDetails': orgDetails
             }
             return result
@@ -364,14 +360,14 @@ class MarkAttendance(Resource):
         args = attendanceParser.parse_args()
         res,uid = DbHelper.getUserIdFromToken(args['Authorization'])
         if res:
-            orgPipeline[0]["$match"]["firebaseID"] = uid
-            dbres = list(db.userdata.aggregate(orgPipeline))[0]
-            if 'orgDetails' not in dbres:
+            userres = DbHelper.getUserDetails(uid, db)
+            if not userres['org']:
                 return {
                     'result':False,
                     'error': 'Join org first'
                 }
-            orgDetails = list(dbres['orgDetails'])[0]
+            dbres = userres['user']
+            orgDetails = userres['org']
             if not orgDetails['markExit'] and args['entryExit']:
                 return{
                     'result':False,
@@ -432,6 +428,116 @@ class MarkAttendance(Resource):
                 'result': False,
                 'error':'Some Error Occured'
             }
+        else:
+            return{
+                'result':False,
+                'error': uid
+            }
+
+
+@api.route('/newleave')
+@api.doc(params={'Authorization': 'firebase token'})
+class NewLeave(Resource):
+    @api.expect(newLeaveParser)
+    def post(self):
+        args = newLeaveParser.parse_args()
+        res,uid = DbHelper.getUserIdFromToken(args['Authorization'])
+        if res:
+            userres = DbHelper.getUserDetails(uid, db)
+            if userres['org']:
+                db.leaves.insert_one({
+                    'org': userres['org']['_id'],
+                    'orgOwner': userres['org']['owner'],
+                    'leaveBy': userres['user']['firebaseID'],
+                    'startDate': args['startDate'],
+                    'endDate': args['endDate'],
+                    'msg': args['message'],
+                    'approved': 0,
+                    'approvalTime': None,
+                    'pubID': generate(size=8)
+                })
+            else:
+                return {
+                    'result': False,
+                    'error': 'No org to create leave request'
+                }
+        else:
+            return{
+                'result':False,
+                'error': uid
+            }
+
+
+@api.route('/getLeaves')
+@api.doc(params={'Authorization': 'firebase token'})
+class GetLeaves(Resource):
+    @api.expect(userDetailsParser)
+    def post(self):
+        args = userDetailsParser.parse_args()
+        res,uid = DbHelper.getUserIdFromToken(args['Authorization'])
+        if res:
+            dbres = DbHelper.getLeavesWithOrgs(uid, db)
+            if dbres:
+                return {
+                    'result':True,
+                    'leaves':dbres
+                }
+            else:
+                return {
+                    'result':False,
+                    'error': 'No Leaves Found'
+                }
+        else:
+            return{
+                'result':False,
+                'error': uid
+            }
+
+
+@api.route('/myleaves')
+@api.doc(params={'Authorization': 'firebase token'})
+class MyLeaves(Resource):
+    @api.expect(userDetailsParser)
+    def post(self):
+        args = userDetailsParser.parse_args()
+        res,uid = DbHelper.getUserIdFromToken(args['Authorization'])
+        if res:
+            dbres = DbHelper.getMyLeaves(uid, db)
+            if dbres:
+                return {
+                    'result':True,
+                    'leaves':dbres
+                }
+            else:
+                return {
+                    'result':False,
+                    'error': 'No Leaves Found'
+                }
+        else:
+            return{
+                'result':False,
+                'error': uid
+            }
+        
+
+@api.route('/approveLeave')
+@api.doc(params={'Authorization': 'firebase token'})
+class ApproveLeaves(Resource):
+    @api.expect(approveLeaveParser)
+    def post(self):
+        args = approveLeaveParser.parse_args()
+        res, uid = DbHelper.getUserIdFromToken(args['Authorization'])
+        if res:
+            dbres = db.leaves.update_one({'pubID':args['pubID']},{'$set':{'approved':1,'approvalTime':datetime.datetime.utcnow().date().isoformat()}})
+            if dbres.modified_count > 0:
+                return {
+                    'result':True,
+                }
+            else:
+                return {
+                    'result':False,
+                    'error': 'No Leaves Found'
+                }
         else:
             return{
                 'result':False,

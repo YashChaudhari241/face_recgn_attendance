@@ -2,6 +2,7 @@ from firebase_admin import auth
 import datetime
 from rec import getEncodings
 import numpy as np
+
 class DbHelper:
     @staticmethod
     def getUserId(unique, name, db):
@@ -84,3 +85,117 @@ class DbHelper:
             return (True,True)
         else:
             return (False,'Face didnt match')
+
+    @staticmethod
+    def getUserDetails(uid,db):
+        orgPipeline = [{
+                "$match": {
+                    "firebaseID": 0
+                }
+            },
+            {
+                "$lookup": {
+                        "from": "orgs",
+                        "localField": "joinedOrgs",
+                        "foreignField": "_id",
+                        "as": "orgDetails"}
+                }
+            ]
+        orgPipeline[0]["$match"]["firebaseID"] = uid
+        dbres = list(db.userdata.aggregate(orgPipeline))[0]
+        if 'orgDetails' in dbres:
+            orgDetails = list(dbres['orgDetails'])[0]
+        else:
+            orgDetails = None
+        return {
+            'org': orgDetails,
+            'user': dbres
+        }
+
+    @staticmethod
+    def getLeavesWithOrgs(uid,db):
+        orgPipeline = [{
+                "$match": {
+                    "orgOwner": uid
+                }
+            },
+            {
+                "$lookup": {
+                        "from": "orgs",
+                        "localField": "org",
+                        "foreignField": "_id",
+                        "as": "orgDetails"}
+            },
+            {
+                "$project":{
+                    "_id": 0,
+                    "org": 0,
+                    'orgDetails._id': 0,
+                    'orgDetails.owner': 0,
+                    'orgDetails.locationData': 0,
+                    'orgDetails.joinPass': 0,
+                    'orgOwner': 0
+                }
+            }
+            ]
+        dbres = list(db.leaves.aggregate(orgPipeline))
+        identifiers = []
+        for x in dbres:
+            x['startDate'] = x['startDate'].isoformat()
+            x['endDate'] = x['endDate'].isoformat()
+            identifiers.append(auth.UidIdentifier(x['leaveBy']))
+        result = auth.get_users(identifiers)
+        memo =[]
+        for z in dbres:
+            if z['leaveBy'] not in memo:
+                for x in result.users:
+                    if x.uid == z['leaveBy']:
+                        memo.append({x.uid:x.display_name})
+                        z['leaveBy'] = x.display_name
+            else:
+                z['leaveBy'] = memo[z['leaveBy']]
+        return dbres
+
+    @staticmethod
+    def getMyLeaves(uid,db):
+        orgPipeline = [{
+                "$match": {
+                    "leaveBy": uid
+                }
+            },
+            {
+                "$lookup": {
+                        "from": "orgs",
+                        "localField": "org",
+                        "foreignField": "_id",
+                        "as": "orgDetails"}
+            },
+            {
+                "$project":{
+                    "_id": 0,
+                    "org": 0,
+                    "leaveBy": 0,
+                    'orgDetails._id': 0,
+                    'orgDetails.owner': 0,
+                    'orgDetails.locationData': 0,
+                    'orgDetails.joinPass': 0,
+                }
+            }
+            ]
+        dbres = list(db.leaves.aggregate(orgPipeline))
+        identifiers = []
+        for x in dbres:
+            x['startDate'] = x['startDate'].isoformat()
+            x['endDate'] = x['endDate'].isoformat()
+            identifiers.append(auth.UidIdentifier(x['orgOwner']))
+        result = auth.get_users(identifiers)
+        memo =[]
+        for z in dbres:
+            if z['orgOwner'] not in memo:
+                for x in result.users:
+                    if x.uid == z['orgOwner']:
+                        memo.append({x.uid:x.display_name})
+                        z['orgOwner'] = x.display_name
+            else:
+                z['orgOwner'] = memo[z['orgOwner']]
+        return dbres
