@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RelativeLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    tools:context=".MainActivity"
+    tools:ignore="HardcodedText">
+    <androidx.appcompat.widget.Toolbar
+        android:id="@+id/toolbar"
+        android:layout_width="match_parent"
+        android:layout_height="?attr/actionBarSize"
+        android:background="@drawable/rectangle_1">
+        <TextView
+            android:id="@+id/dashboard"
+            android:layout_width="141dp"
+            android:layout_height="26dp"
+            android:layout_marginStart="45dp"
+            android:layout_marginTop="11dp"
+            android:fontFamily="@font/inter"
+            android:gravity="center_vertical"
+            android:text="@string/dashboard"
+            android:textAppearance="@style/login"
+            android:textStyle="bold" />
+    </androidx.appcompat.widget.Toolbar>
+    <!--Button to open the image selector-->
+    <EditText
+        android:id="@+id/tokenValue"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:layout_below="@+id/BSelectImage"
+        android:layout_centerHorizontal="true"
+        android:layout_marginTop="16dp"
+        android:layout_marginBottom="281dp"
+        android:text="Hello"
+        android:inputType="textMultiLine"
+         />
+
+    <Button
+        android:id="@+id/BSelectImage"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_centerHorizontal="true"
+        android:layout_marginTop="102dp"
+        android:text="SELECT IMAGE"
+        android:textColor="@android:color/white"
+        android:textSize="18sp" />
+
+    <!--ImageView to preview the selected image-->
+<!--    <ImageView-->
+<!--        android:id="@+id/IVPreviewImage"-->
+<!--        android:layout_width="match_parent"-->
+<!--        android:layout_height="300dp"-->
+<!--        android:layout_below="@id/BSelectImage"-->
+<!--        android:layout_marginStart="16dp"-->
+<!--        android:layout_marginTop="16dp"-->
+<!--        android:layout_marginEnd="16dp" />-->
+
+</RelativeLayout>

@@ -1,0 +1,39 @@
+{
+  "project_info": {
+    "project_number": "625994467331",
+    "project_id": "faceattend-d53f0",
+    "storage_bucket": "faceattend-d53f0.appspot.com"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:625994467331:android:56a485c289708c8b3ea636",
+        "android_client_info": {
+          "package_name": "com.example.faceattend"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "625994467331-866etposoo629rvf1fns3gvhebjvtlpp.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDxkeqqtKIC_1Ju7HSJyKmaqPp8rHNmf1Y"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "625994467331-866etposoo629rvf1fns3gvhebjvtlpp.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
