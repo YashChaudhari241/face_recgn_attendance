@@ -304,13 +304,17 @@ class UserDetails(Resource):
             userres = DbHelper.getUserDetails(uid, db)
             orgDetails = userres['org']
             if orgDetails:
-                orgDetails.pop('_id')
                 owner = auth.get_user(orgDetails.pop('owner'))
                 orgDetails['ownerName'] = owner.display_name
                 orgDetails['ownerPic'] = owner.photo_url
+                attendanceObj = userres["user"]['attendance']
+                for x in attendanceObj:
+                    x['timeStamp'] = x['timeStamp'].isoformat()
+
             result = {
                 'result': True,
                 'priv': userres['user']['priv'],
+                'attendance':attendanceObj,
                 'orgDetails': orgDetails
             }
             return result

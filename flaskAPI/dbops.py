@@ -2,7 +2,6 @@ from firebase_admin import auth
 import datetime
 from rec import getEncodings
 import numpy as np
-
 class DbHelper:
     @staticmethod
     def getUserId(unique, name, db):
@@ -99,7 +98,16 @@ class DbHelper:
                         "localField": "joinedOrgs",
                         "foreignField": "_id",
                         "as": "orgDetails"}
+                },
+            {
+                "$project":{
+                    "attendance.org": 0,
+                    "faceEncodings":0,
+                    "_id":0,
+                    "joinedOrgs":0,
+                    "orgDetails._id":0
                 }
+            }
             ]
         orgPipeline[0]["$match"]["firebaseID"] = uid
         dbres = list(db.userdata.aggregate(orgPipeline))[0]
