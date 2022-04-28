@@ -2,6 +2,7 @@ from firebase_admin import auth
 import datetime
 from rec import getEncodings
 import numpy as np
+from nanoid import generate
 class DbHelper:
     @staticmethod
     def getUserId(unique, name, db):
@@ -50,7 +51,7 @@ class DbHelper:
                 return "unauthorized"
         except auth.InvalidIdTokenError:
             return "expired/invalid"
-        result = db.userdata.update_one({'firebaseID': uid}, {'$set': {"priv": args['priv']}}, upsert=True)
+        result = db.userdata.update_one({'firebaseID': uid}, {'$set': {"priv": args['priv'],"pubID":generate(size=8)}}, upsert=True)
         return "true" if (result.matched_count == 1 or result.upserted_id) else "false"
 
     @staticmethod
@@ -86,6 +87,127 @@ class DbHelper:
             return (False,'Face didnt match')
 
     @staticmethod
+    def getEmployees(uid,db,uniqueStr):
+        orgPipeline = [{
+                "$match": {
+                    "owner":uid,
+                    "uniqueString":uniqueStr
+                }
+            },
+            {
+                "$lookup": {
+                        "from": "userdata",
+                        "localField": "_id",
+                        "foreignField": "joinedOrgs",
+                        "as": "users"}
+                },
+            {
+                "$project":{
+                    "users.faceEncodings":0,
+                    "_id":0,
+                    "users.joinedOrgs":0,
+                    "users._id":0,
+                    "users.attendance":0
+                }
+            }
+            ]
+        result = list(db.orgs.aggregate(orgPipeline))
+        return {
+                'result':True,
+                'employees':result
+            }
+
+    @staticmethod
+    def getOrgs(uid,db):
+        result = list(db.orgs.find({'owner':uid},{"_id":0}))
+        return {
+                'result':True,
+                'orgs':result
+            }
+
+    @staticmethod
+    def hasAuthority(uid,db,pubID):
+        orgPipeline = [{
+                "$match": {
+                    "owner":uid,
+                }
+            },
+            {
+                "$lookup": {
+                        "from": "userdata",
+                        "localField": "_id",
+                        "foreignField": "joinedOrgs",
+                        "as": "users"}
+                },
+            {
+                "$project":{
+                    "users.faceEncodings":0,
+                    "_id":0,
+                    "users.joinedOrgs":0,
+                    "users._id":0,
+                    "users.attendance":0
+                }
+            },{
+                "$match":{
+                    "users.pubID": pubID
+                }
+            }
+            ]
+        result = list(db.orgs.aggregate(orgPipeline))
+        if result:
+            return True
+        else:
+            return False
+
+    @staticmethod
+    def transfer(uid,db,org_str,pubID):
+        orgPipeline = [{
+                "$match": {
+                    "owner":uid,
+                    "uniqueString":org_str
+                }
+            },
+            {
+                "$lookup": {
+                        "from": "userdata",
+                        "localField": "_id",
+                        "foreignField": "joinedOrgs",
+                        "as": "users"}
+                },
+            {
+                "$project":{
+                    "users.faceEncodings":0,
+                    "_id":0,
+                    "users.joinedOrgs":0,
+                    "users._id":0,
+                    "users.attendance":0
+                }
+            },{
+                "$match":{
+                    "users.pubID": pubID
+                }
+            }
+            ]
+        result = db.orgs.aggregate(orgPipeline)
+        if result and 'users' in result and result['users']:
+            res = db.orgs.update_one({'uniqueStr':org_str},{'owner':result['users'][0]['firebaseID']}).modified_count
+            if res>0:
+                return {
+                    'result':True,
+                }
+            else:
+                return{
+                    'result':False,
+                    'error':'Not an Owner or New owner didnt join your org'
+                }
+        else:
+            return {
+                    'result':False,
+                    'error':'Not an Owner or New owner didnt join your org'
+                }
+
+
+    @staticmethod
     def getUserDetails(uid,db):
         orgPipeline = [{
                 "$match": {
@@ -110,15 +232,29 @@ class DbHelper:
             }
             ]
         orgPipeline[0]["$match"]["firebaseID"] = uid
-        dbres = list(db.userdata.aggregate(orgPipeline))[0]
-        if 'orgDetails' in dbres:
-            orgDetails = list(dbres['orgDetails'])[0]
+        result = list(db.userdata.aggregate(orgPipeline))
+        if result:
+            dbres = result[0]
+            if 'orgDetails' in dbres and dbres['orgDetails']:
+                orgDetails = list(dbres['orgDetails'])[0]
+            else:
+                orgDetails = None
+            return {
+                'org': orgDetails,
+                'user': dbres
+            }
         else:
-            orgDetails = None
-        return {
-            'org': orgDetails,
-            'user': dbres
-        }
+            return{
+                'org': None,
+                'user':None
+            }
+
+    @staticmethod
+    def removeExtraQuotes(args):
+        for x in args:
+            if isinstance(args[x], str):
+                args[x] = args[x].strip('"')
+        return args
 
     @staticmethod
     def getLeavesWithOrgs(uid,db):

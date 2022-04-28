@@ -176,6 +176,7 @@ class OrgInit(Resource):
     @api.expect(orgInitParser)
     def post(self):
         args = orgInitParser.parse_args()
+        args = DbHelper.removeExtraQuotes(args)
         res, uid = DbHelper.getUserIdFromToken(args['Authorization'])
         if res:
             orgToAdd = {
@@ -302,21 +303,28 @@ class UserDetails(Resource):
         res,uid = DbHelper.getUserIdFromToken(args['Authorization'])
         if res:
             userres = DbHelper.getUserDetails(uid, db)
-            orgDetails = userres['org']
-            if orgDetails:
-                owner = auth.get_user(orgDetails.pop('owner'))
-                orgDetails['ownerName'] = owner.display_name
-                orgDetails['ownerPic'] = owner.photo_url
-                attendanceObj = userres["user"]['attendance']
-                for x in attendanceObj:
-                    x['timeStamp'] = x['timeStamp'].isoformat()
+            if userres['user']:
+                orgDetails = userres['org']
+                attendanceObj = None
+                if orgDetails:
+                    owner = auth.get_user(orgDetails.pop('owner'))
+                    orgDetails['ownerName'] = owner.display_name
+                    orgDetails['ownerPic'] = owner.photo_url
+                    attendanceObj = userres["user"]['attendance']
+                    for x in attendanceObj:
+                        x['timeStamp'] = x['timeStamp'].isoformat()
 
-            result = {
-                'result': True,
-                'priv': userres['user']['priv'],
-                'attendance':attendanceObj,
-                'orgDetails': orgDetails
-            }
+                result = {
+                    'result': True,
+                    'priv': userres['user']['priv'],
+                    'attendance':attendanceObj,
+                    'orgDetails': orgDetails
+                }
+            else:
+                result = {
+                    'result':False,
+                    'error':"User Not Found"
+                }
             return result
         else:
             return{
@@ -362,9 +370,15 @@ class MarkAttendance(Resource):
     @api.expect(attendanceParser)
     def post(self):
         args = attendanceParser.parse_args()
+        args = DbHelper.removeExtraQuotes(args)
         res,uid = DbHelper.getUserIdFromToken(args['Authorization'])
         if res:
             userres = DbHelper.getUserDetails(uid, db)
+            if not userres['user']:
+                return {
+                    'result':False,
+                    'error': 'No user found'
+                }
             if not userres['org']:
                 return {
                     'result':False,
@@ -445,12 +459,13 @@ class NewLeave(Resource):
     @api.expect(newLeaveParser)
     def post(self):
         args = newLeaveParser.parse_args()
+        args = DbHelper.removeExtraQuotes(args)
         res,uid = DbHelper.getUserIdFromToken(args['Authorization'])
         if res:
             userres = DbHelper.getUserDetails(uid, db)
             if userres['org']:
                 db.leaves.insert_one({
-                    'org': userres['org']['_id'],
+                    'org': userres['org']['uniqueString'],
                     'orgOwner': userres['org']['owner'],
                     'leaveBy': userres['user']['firebaseID'],
                     'startDate': args['startDate'],
@@ -460,6 +475,9 @@ class NewLeave(Resource):
                     'approvalTime': None,
                     'pubID': generate(size=8)
                 })
+                return {
+                    'result': True
+                }
             else:
                 return {
                     'result': False,
@@ -530,6 +548,7 @@ class ApproveLeaves(Resource):
     @api.expect(approveLeaveParser)
     def post(self):
         args = approveLeaveParser.parse_args()
+        args = DbHelper.removeExtraQuotes(args)
         res, uid = DbHelper.getUserIdFromToken(args['Authorization'])
         if res:
             dbres = db.leaves.update_one({'pubID':args['pubID']},{'$set':{'approved':1,'approvalTime':datetime.datetime.utcnow().date().isoformat()}})
@@ -547,6 +566,152 @@ class ApproveLeaves(Resource):
                 'result':False,
                 'error': uid
             }
+
+@api.route('/getemployees/<string:org_str>')
+@api.doc(params={'Authorization': 'firebase token'})
+class GetEmployees(Resource):
+    @api.expect(userDetailsParser)
+    def post(self,org_str):
+        args = userDetailsParser.parse_args()
+        res, uid = DbHelper.getUserIdFromToken(args['Authorization'])
+        if res:
+            return DbHelper.getEmployees(uid, db,org_str)
+        else:
+            return{
+                'result':False,
+                'error': uid
+            }
+
+@api.route('/getorgs')
+@api.doc(params={'Authorization': 'firebase token'})
+class GetOrgs(Resource):
+    @api.expect(userDetailsParser)
+    def post(self):
+        args = userDetailsParser.parse_args()
+        res, uid = DbHelper.getUserIdFromToken(args['Authorization'])
+        if res:
+            return DbHelper.getOrgs(uid, db)
+        else:
+            return{
+                'result':False,
+                'error': uid
+            }
+
+@api.route('/leaveorg')
+@api.doc(params={'Authorization': 'firebase token'})
+class LeaveOrg(Resource):
+    @api.expect(userDetailsParser)
+    def post(self):
+        args = userDetailsParser.parse_args()
+        res, uid = DbHelper.getUserIdFromToken(args['Authorization'])
+        if res:
+            db.userdata.update_one({'firebaseID':uid}, {"$set":{"joinedOrgs":None,"attendance":None,"faceEncodings":None}})
+            return{
+                'result':True
+            }
+        else:
+            return{
+                'result':False,
+                'error': uid
+            }
+
+@api.route('/removeemp')
+@api.doc(params={'Authorization': 'firebase token'})
+class RemoveEmployee(Resource):
+    @api.expect(approveLeaveParser)
+    def post(self):
+        args = approveLeaveParser.parse_args()
+        res, uid = DbHelper.getUserIdFromToken(args['Authorization'])
+        if res:
+            if DbHelper.hasAuthority(uid, db, args['pubID']):
+                res = db.userdata.update_one({'pubID':args['pubID']}, {"$set":{"joinedOrgs":None,"attendance":None,"faceEncodings":None}}).modified_count
+                if res>0:            
+                    return{
+                        'result':True
+                    }
+                else:
+                    return{
+                        'result':False,
+                        'error': 'No user found'
+                    }
+            else:
+                {
+                        'result':False,
+                        'error': 'Not Authorised to Remove'
+                }
+
+        else:
+            return{
+                'result':False,
+                'error': uid
+            }
+
+@api.route('/delete/<string:org_str>')
+@api.doc(params={'Authorization': 'firebase token'})
+class DeleteOrg(Resource):
+    @api.expect(userDetailsParser)
+    def post(self,org_str):
+        args = userDetailsParser.parse_args()
+        res, uid = DbHelper.getUserIdFromToken(args['Authorization'])
+        if res:
+            result = db.orgs.find_one({'owner':uid,'uniqueString':org_str})
+            if result:
+                db.userdata.update_many({'joinedOrgs':result['_id']}, {"$set":{"attendance":None,"faceEncodings":None,"joinedOrgs":None}})
+                db.orgs.delete_one({"_id":result["_id"]})
+                return{
+                        'result':True
+                    }
+            else:
+                return{
+                'result':False,
+                'error': "Not an Org owner or Incorrect Org Code"
+            }    
+        else:
+            return{
+                'result':False,
+                'error': uid
+            }
+        
+@api.route('/deleteaccount')
+@api.doc(params={'Authorization': 'firebase token'})
+class DeleteUser(Resource):
+    @api.expect(userDetailsParser)
+    def post(self):
+        args = userDetailsParser.parse_args()
+        res, uid = DbHelper.getUserIdFromToken(args['Authorization'])
+        if res:
+            result = db.orgs.find_one({'owner':uid})
+            if result:
+                return {
+                    'result': False,
+                    'error': "Transfer Org ownership of "+result['orgName']+" or delete org before deleting account"
+                }
+            else:
+                db.userdata.delete_one({'firebaseID':uid})
+                return{
+                    'result':True,
+                }    
+        else:
+            return{
+                'result':False,
+                'error': uid
+            }      
+
+@api.route('/transfer/<string:org_str>')
+@api.doc(params={'Authorization': 'firebase token'})
+class DeleteUser(Resource):
+    @api.expect(approveLeaveParser)
+    def post(self,org_str):
+        args = approveLeaveParser.parse_args()
+        res, uid = DbHelper.getUserIdFromToken(args['Authorization'])
+        if res:
+            return DbHelper.transfer(uid, db, org_str, args['pubID'])
+        else:
+            return{
+                'result':False,
+                'error': uid
+            }      
+
 
 if __name__ == '__main__':
     if "IS_DEV" in os.environ:
