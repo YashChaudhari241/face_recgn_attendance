@@ -36,7 +36,7 @@ try:
     client = MongoClient(dbCred, server_api=ServerApi('1'))
     db = client.facerec
 except KeyError:
-    print("Unable to connect to database")
+    print("Unable to connect to database") // connect to databse
 
 
 saveParser = reqparse.RequestParser()
