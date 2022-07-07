@@ -1,5 +1,5 @@
 # Facial Recognition based Attendance App
-Android app to mark attendance using Facial Recognition
+Android application to mark attendance using Facial Recognition System.
 
 # Technologies used:
 Python,
